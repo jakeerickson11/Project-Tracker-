@@ -1,6 +1,21 @@
-const STORAGE_KEY = "simple_project_tracker_v2";
+// 1) Paste your Supabase credentials here:
+const SUPABASE_URL = "https://yfyddckvjfeqkwoiqcix.supabase.co";
+const SUPABASE_ANON_KEY = "PASTE_YOUR_SUPABASE_ANON_KEY";
+
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const els = {
+  loginView: document.getElementById("loginView"),
+  appView: document.getElementById("appView"),
+  loginForm: document.getElementById("loginForm"),
+  emailInput: document.getElementById("emailInput"),
+  loginMsg: document.getElementById("loginMsg"),
+
+  signOutBtn: document.getElementById("signOutBtn"),
+  resetBtn: document.getElementById("resetBtn"),
+  projectSelect: document.getElementById("projectSelect"),
+  newProjectBtn: document.getElementById("newProjectBtn"),
+
   list: document.getElementById("taskList"),
   empty: document.getElementById("emptyState"),
   input: document.getElementById("taskInput"),
@@ -8,48 +23,31 @@ const els = {
   barFill: document.getElementById("barFill"),
   progressText: document.getElementById("progressText"),
   progressPct: document.getElementById("progressPct"),
-  resetBtn: document.getElementById("resetBtn"),
-  projectSelect: document.getElementById("projectSelect"),
-  newProjectBtn: document.getElementById("newProjectBtn"),
 };
 
-function uid(){
-  return Math.random().toString(16).slice(2) + Date.now().toString(16);
+let sessionUser = null;
+let activeProjectId = null;
+let projects = [];
+let tasks = []; // tasks for active project only
+
+function showLogin(msg=""){
+  els.appView.style.display = "none";
+  els.loginView.style.display = "block";
+  els.loginMsg.textContent = msg;
 }
 
-function loadState(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return bootstrapState();
-    const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.projects)) return bootstrapState();
-    if (!parsed.activeProjectId) parsed.activeProjectId = parsed.projects[0]?.id || null;
-    return parsed;
-  }catch{
-    return bootstrapState();
-  }
+function showApp(){
+  els.loginView.style.display = "none";
+  els.appView.style.display = "block";
 }
 
-function bootstrapState(){
-  const p = { id: uid(), name: "My Project", tasks: [] };
-  return { projects: [p], activeProjectId: p.id };
+function sortTasks(arr){
+  return [...arr].sort((a,b) => (a.position ?? 0) - (b.position ?? 0));
 }
 
-function saveState(state){
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
-
-function getActiveProject(state){
-  return state.projects.find(p => p.id === state.activeProjectId) || state.projects[0];
-}
-
-function sortTasks(tasks){
-  return [...tasks].sort((a,b) => (a.position ?? 0) - (b.position ?? 0));
-}
-
-function calcProgress(tasks){
-  const total = tasks.length;
-  const done = tasks.filter(t => t.done).length;
+function calcProgress(arr){
+  const total = arr.length;
+  const done = arr.filter(t => t.done).length;
   const pct = total === 0 ? 0 : Math.round((done / total) * 100);
   return { total, done, pct };
 }
@@ -79,35 +77,52 @@ function pickPositionForInsert(sortedTasks, mode, refId){
   return (sortedTasks[sortedTasks.length - 1].position ?? STEP) + STEP;
 }
 
-function renderProjectPicker(state){
-  const active = getActiveProject(state);
+async function fetchProjects(){
+  const { data, error } = await supabase
+    .from("projects")
+    .select("id, name, created_at, updated_at")
+    .order("created_at", { ascending: true });
 
+  if (error) throw error;
+  projects = data || [];
+}
+
+async function fetchTasks(projectId){
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("id, text, done, position, created_at, updated_at")
+    .eq("project_id", projectId)
+    .order("position", { ascending: true });
+
+  if (error) throw error;
+  tasks = data || [];
+}
+
+function renderProjectPicker(){
   els.projectSelect.innerHTML = "";
-  for (const p of state.projects){
+  for (const p of projects){
     const opt = document.createElement("option");
     opt.value = p.id;
     opt.textContent = p.name || "Untitled";
-    if (p.id === active.id) opt.selected = true;
+    if (p.id === activeProjectId) opt.selected = true;
     els.projectSelect.appendChild(opt);
   }
 }
 
 function render(){
-  const state = loadState();
-  const project = getActiveProject(state);
-  const tasks = sortTasks(project.tasks || []);
+  const sorted = sortTasks(tasks);
 
-  renderProjectPicker(state);
+  renderProjectPicker();
 
-  const { total, done, pct } = calcProgress(tasks);
+  const { total, done, pct } = calcProgress(sorted);
   els.progressText.textContent = `${done} / ${total} complete`;
   els.progressPct.textContent = `${pct}%`;
   els.barFill.style.width = `${pct}%`;
 
-  els.empty.style.display = tasks.length ? "none" : "block";
+  els.empty.style.display = sorted.length ? "none" : "block";
   els.list.innerHTML = "";
 
-  for (const t of tasks){
+  for (const t of sorted){
     const li = document.createElement("li");
     li.className = "task";
 
@@ -121,14 +136,17 @@ function render(){
     cb.type = "checkbox";
     cb.className = "check";
     cb.checked = !!t.done;
-    cb.addEventListener("change", () => {
-      const s = loadState();
-      const pr = getActiveProject(s);
-      const task = pr.tasks.find(x => x.id === t.id);
-      if (!task) return;
-      task.done = cb.checked;
-      saveState(s);
-      render();
+    cb.addEventListener("change", async () => {
+      const { error } = await supabase
+        .from("tasks")
+        .update({ done: cb.checked })
+        .eq("id", t.id);
+      if (!error) {
+        t.done = cb.checked;
+        render();
+      } else {
+        alert("Could not update task.");
+      }
     });
 
     const text = document.createElement("div");
@@ -157,12 +175,14 @@ function render(){
     delBtn.className = "small danger";
     delBtn.type = "button";
     delBtn.textContent = "Delete";
-    delBtn.addEventListener("click", () => {
-      const s = loadState();
-      const pr = getActiveProject(s);
-      pr.tasks = pr.tasks.filter(x => x.id !== t.id);
-      saveState(s);
-      render();
+    delBtn.addEventListener("click", async () => {
+      const { error } = await supabase.from("tasks").delete().eq("id", t.id);
+      if (!error) {
+        tasks = tasks.filter(x => x.id !== t.id);
+        render();
+      } else {
+        alert("Could not delete task.");
+      }
     });
 
     controls.appendChild(aboveBtn);
@@ -176,26 +196,59 @@ function render(){
   }
 }
 
-function addTask(text, mode="bottom", refId=null){
+async function ensureDefaultProject(){
+  if (projects.length) return;
+  const { error } = await supabase.from("projects").insert([{
+    owner_id: sessionUser.id,
+    name: "My Project"
+  }]);
+  if (error) throw error;
+  await fetchProjects();
+}
+
+async function setActiveProject(projectId){
+  activeProjectId = projectId;
+  await fetchTasks(activeProjectId);
+  render();
+}
+
+async function addProject(){
+  const name = prompt("New project name:");
+  if (name === null) return;
+  const trimmed = name.trim() || "Untitled";
+
+  const { error } = await supabase.from("projects").insert([{
+    owner_id: sessionUser.id,
+    name: trimmed
+  }]);
+  if (error) return alert("Could not create project.");
+
+  await fetchProjects();
+  await setActiveProject(projects[projects.length - 1].id);
+}
+
+async function addTask(text, mode="bottom", refId=null){
   const trimmed = (text || "").trim();
   if (!trimmed) return;
 
-  const state = loadState();
-  const project = getActiveProject(state);
-  project.tasks = project.tasks || [];
-
-  const sorted = sortTasks(project.tasks);
+  const sorted = sortTasks(tasks);
   const position = pickPositionForInsert(sorted, mode, refId);
 
-  project.tasks.push({
-    id: uid(),
-    text: trimmed,
-    done: false,
-    position,
-    createdAt: new Date().toISOString(),
-  });
+  const { data, error } = await supabase
+    .from("tasks")
+    .insert([{
+      owner_id: sessionUser.id,
+      project_id: activeProjectId,
+      text: trimmed,
+      done: false,
+      position
+    }])
+    .select("id, text, done, position, created_at, updated_at")
+    .single();
 
-  saveState(state);
+  if (error) return alert("Could not add task.");
+
+  tasks.push(data);
   render();
 }
 
@@ -205,42 +258,83 @@ function quickInsert(mode, refId){
   addTask(txt, mode, refId);
 }
 
-// Events
-els.form.addEventListener("submit", (e) => {
+async function resetProject(){
+  const project = projects.find(p => p.id === activeProjectId);
+  const ok = confirm(`Reset and delete all tasks in "${project?.name || "this project"}"?`);
+  if (!ok) return;
+
+  const { error } = await supabase
+    .from("tasks")
+    .delete()
+    .eq("project_id", activeProjectId);
+
+  if (error) return alert("Could not reset project.");
+
+  tasks = [];
+  render();
+}
+
+// Auth: login via magic link
+els.loginForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = (els.emailInput.value || "").trim();
+  if (!email) return;
+
+  els.loginMsg.textContent = "Sending link… check your email.";
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.origin + window.location.pathname }
+  });
+
+  els.loginMsg.textContent = error
+    ? "Could not send link. Check your Supabase Auth URL settings."
+    : "Link sent! Open your email and tap the sign-in link.";
+});
+
+// App events
+els.form?.addEventListener("submit", (e) => {
   e.preventDefault();
   addTask(els.input.value, "bottom");
   els.input.value = "";
   els.input.focus();
 });
 
-els.projectSelect.addEventListener("change", () => {
-  const state = loadState();
-  state.activeProjectId = els.projectSelect.value;
-  saveState(state);
-  render();
+els.projectSelect?.addEventListener("change", async () => {
+  await setActiveProject(els.projectSelect.value);
 });
 
-els.newProjectBtn.addEventListener("click", () => {
-  const name = prompt("New project name:");
-  if (name === null) return;
+els.newProjectBtn?.addEventListener("click", addProject);
+els.resetBtn?.addEventListener("click", resetProject);
 
-  const trimmed = name.trim() || "Untitled";
-  const state = loadState();
-  const p = { id: uid(), name: trimmed, tasks: [] };
-  state.projects.push(p);
-  state.activeProjectId = p.id;
-  saveState(state);
-  render();
+els.signOutBtn?.addEventListener("click", async () => {
+  await supabase.auth.signOut();
+  sessionUser = null;
+  showLogin("Signed out.");
 });
 
-els.resetBtn.addEventListener("click", () => {
-  const state = loadState();
-  const project = getActiveProject(state);
-  const ok = confirm(`Reset and delete all tasks in "${project.name}"?`);
-  if (!ok) return;
-  project.tasks = [];
-  saveState(state);
-  render();
-});
+// Startup
+async function start(){
+  const { data: { session } } = await supabase.auth.getSession();
+  sessionUser = session?.user || null;
 
-render();
+  // react to auth changes (magic link completes here)
+  supabase.auth.onAuthStateChange(async (_event, newSession) => {
+    sessionUser = newSession?.user || null;
+    if (sessionUser) await loadAndShowApp();
+    else showLogin();
+  });
+
+  if (!sessionUser) return showLogin();
+  await loadAndShowApp();
+}
+
+async function loadAndShowApp(){
+  showApp();
+  await fetchProjects();
+  await ensureDefaultProject();
+  // pick first project by default
+  activeProjectId = projects[0].id;
+  await setActiveProject(activeProjectId);
+}
+
+start();
