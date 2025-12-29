@@ -15,7 +15,16 @@
     <header class="top">
       <div class="titleRow">
         <h1>Project Tracker</h1>
-        <button id="resetBtn" class="ghost" title="Reset all tasks">Reset</button>
+        <button id="resetBtn" class="ghost" title="Reset current project">Reset</button>
+      </div>
+
+      <!-- NEW: Project picker row -->
+      <div class="progressCard" style="display:flex; gap:10px; align-items:center; justify-content:space-between;">
+        <div style="display:flex; flex-direction:column; gap:6px; flex:1;">
+          <div class="muted" style="font-size:12px;">Project</div>
+          <select id="projectSelect" class="projectSelect"></select>
+        </div>
+        <button id="newProjectBtn" class="ghost" type="button">+ New</button>
       </div>
 
       <div class="progressCard">
@@ -43,7 +52,6 @@
 
   <script src="./app.js"></script>
   <script>
-    // Register service worker (PWA offline)
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
         navigator.serviceWorker.register("./sw.js").catch(() => {});
