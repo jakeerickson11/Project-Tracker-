@@ -1,5 +1,6 @@
-const SUPABASE_URL = "PASTE_YOUR_SUPABASE_PROJECT_URL";
-const SUPABASE_ANON_KEY = "PASTE_YOUR_SUPABASE_ANON_KEY";
+const SUPABASE_URL = "https://yfyddckvjfeqkwoiqcix.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlmeWRkY2t2amZlcWt3b2lxY2l4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwMzM0MDIsImV4cCI6MjA4MjYwOTQwMn0.K2qiN7vqRfPwN7WCL3j102wxYWzwQ7bp7_LtSGVfEqw";
+
 
 // Grab the global Supabase client factory from the CDN
 const { createClient } = window.supabase || {};
