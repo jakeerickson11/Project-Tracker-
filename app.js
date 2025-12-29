@@ -1,4 +1,4 @@
-const STORAGE_KEY = "simple_project_tracker_v1";
+const STORAGE_KEY = "simple_project_tracker_v2";
 
 const els = {
   list: document.getElementById("taskList"),
@@ -9,6 +9,8 @@ const els = {
   progressText: document.getElementById("progressText"),
   progressPct: document.getElementById("progressPct"),
   resetBtn: document.getElementById("resetBtn"),
+  projectSelect: document.getElementById("projectSelect"),
+  newProjectBtn: document.getElementById("newProjectBtn"),
 };
 
 function uid(){
@@ -18,17 +20,27 @@ function uid(){
 function loadState(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { tasks: [] };
+    if (!raw) return bootstrapState();
     const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.tasks)) return { tasks: [] };
+    if (!parsed || !Array.isArray(parsed.projects)) return bootstrapState();
+    if (!parsed.activeProjectId) parsed.activeProjectId = parsed.projects[0]?.id || null;
     return parsed;
   }catch{
-    return { tasks: [] };
+    return bootstrapState();
   }
+}
+
+function bootstrapState(){
+  const p = { id: uid(), name: "My Project", tasks: [] };
+  return { projects: [p], activeProjectId: p.id };
 }
 
 function saveState(state){
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function getActiveProject(state){
+  return state.projects.find(p => p.id === state.activeProjectId) || state.projects[0];
 }
 
 function sortTasks(tasks){
@@ -43,59 +55,58 @@ function calcProgress(tasks){
 }
 
 function pickPositionForInsert(sortedTasks, mode, refId){
-  // mode: "top" | "bottom" | "above" | "below"
   const STEP = 1000;
-
   if (sortedTasks.length === 0) return STEP;
 
-  if (mode === "top") {
-    const first = sortedTasks[0].position ?? STEP;
-    return first - STEP;
-  }
-  if (mode === "bottom") {
-    const last = sortedTasks[sortedTasks.length - 1].position ?? STEP;
-    return last + STEP;
-  }
+  if (mode === "top") return (sortedTasks[0].position ?? STEP) - STEP;
+  if (mode === "bottom") return (sortedTasks[sortedTasks.length - 1].position ?? STEP) + STEP;
 
   const idx = sortedTasks.findIndex(t => t.id === refId);
-  if (idx === -1) {
-    // fallback: bottom
-    const last = sortedTasks[sortedTasks.length - 1].position ?? STEP;
-    return last + STEP;
-  }
+  if (idx === -1) return (sortedTasks[sortedTasks.length - 1].position ?? STEP) + STEP;
+
+  const current = sortedTasks[idx].position ?? STEP;
 
   if (mode === "above") {
-    const current = sortedTasks[idx].position ?? STEP;
     const prev = idx > 0 ? (sortedTasks[idx - 1].position ?? (current - STEP)) : (current - STEP);
     return (prev + current) / 2;
   }
 
   if (mode === "below") {
-    const current = sortedTasks[idx].position ?? STEP;
     const next = idx < sortedTasks.length - 1 ? (sortedTasks[idx + 1].position ?? (current + STEP)) : (current + STEP);
     return (current + next) / 2;
   }
 
-  // default bottom
-  const last = sortedTasks[sortedTasks.length - 1].position ?? STEP;
-  return last + STEP;
+  return (sortedTasks[sortedTasks.length - 1].position ?? STEP) + STEP;
+}
+
+function renderProjectPicker(state){
+  const active = getActiveProject(state);
+
+  els.projectSelect.innerHTML = "";
+  for (const p of state.projects){
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = p.name || "Untitled";
+    if (p.id === active.id) opt.selected = true;
+    els.projectSelect.appendChild(opt);
+  }
 }
 
 function render(){
   const state = loadState();
-  const tasks = sortTasks(state.tasks);
+  const project = getActiveProject(state);
+  const tasks = sortTasks(project.tasks || []);
 
-  // progress UI
+  renderProjectPicker(state);
+
   const { total, done, pct } = calcProgress(tasks);
   els.progressText.textContent = `${done} / ${total} complete`;
   els.progressPct.textContent = `${pct}%`;
   els.barFill.style.width = `${pct}%`;
 
-  // empty state
   els.empty.style.display = tasks.length ? "none" : "block";
   els.list.innerHTML = "";
 
-  // list UI
   for (const t of tasks){
     const li = document.createElement("li");
     li.className = "task";
@@ -112,7 +123,8 @@ function render(){
     cb.checked = !!t.done;
     cb.addEventListener("change", () => {
       const s = loadState();
-      const task = s.tasks.find(x => x.id === t.id);
+      const pr = getActiveProject(s);
+      const task = pr.tasks.find(x => x.id === t.id);
       if (!task) return;
       task.done = cb.checked;
       saveState(s);
@@ -147,7 +159,8 @@ function render(){
     delBtn.textContent = "Delete";
     delBtn.addEventListener("click", () => {
       const s = loadState();
-      s.tasks = s.tasks.filter(x => x.id !== t.id);
+      const pr = getActiveProject(s);
+      pr.tasks = pr.tasks.filter(x => x.id !== t.id);
       saveState(s);
       render();
     });
@@ -158,7 +171,6 @@ function render(){
 
     row.appendChild(left);
     row.appendChild(controls);
-
     li.appendChild(row);
     els.list.appendChild(li);
   }
@@ -169,10 +181,13 @@ function addTask(text, mode="bottom", refId=null){
   if (!trimmed) return;
 
   const state = loadState();
-  const sorted = sortTasks(state.tasks);
+  const project = getActiveProject(state);
+  project.tasks = project.tasks || [];
+
+  const sorted = sortTasks(project.tasks);
   const position = pickPositionForInsert(sorted, mode, refId);
 
-  state.tasks.push({
+  project.tasks.push({
     id: uid(),
     text: trimmed,
     done: false,
@@ -185,12 +200,12 @@ function addTask(text, mode="bottom", refId=null){
 }
 
 function quickInsert(mode, refId){
-  // Use a tiny inline prompt to keep UI minimal
   const txt = prompt("Task:");
   if (txt === null) return;
   addTask(txt, mode, refId);
 }
 
+// Events
 els.form.addEventListener("submit", (e) => {
   e.preventDefault();
   addTask(els.input.value, "bottom");
@@ -198,10 +213,33 @@ els.form.addEventListener("submit", (e) => {
   els.input.focus();
 });
 
+els.projectSelect.addEventListener("change", () => {
+  const state = loadState();
+  state.activeProjectId = els.projectSelect.value;
+  saveState(state);
+  render();
+});
+
+els.newProjectBtn.addEventListener("click", () => {
+  const name = prompt("New project name:");
+  if (name === null) return;
+
+  const trimmed = name.trim() || "Untitled";
+  const state = loadState();
+  const p = { id: uid(), name: trimmed, tasks: [] };
+  state.projects.push(p);
+  state.activeProjectId = p.id;
+  saveState(state);
+  render();
+});
+
 els.resetBtn.addEventListener("click", () => {
-  const ok = confirm("Reset and delete all tasks?");
+  const state = loadState();
+  const project = getActiveProject(state);
+  const ok = confirm(`Reset and delete all tasks in "${project.name}"?`);
   if (!ok) return;
-  localStorage.removeItem(STORAGE_KEY);
+  project.tasks = [];
+  saveState(state);
   render();
 });
 
