@@ -7,18 +7,35 @@
 
   <link rel="manifest" href="./manifest.json">
   <meta name="theme-color" content="#111111" />
-
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <main class="wrap">
+  <!-- LOGIN VIEW -->
+  <main id="loginView" class="wrap" style="display:none;">
+    <header class="top">
+      <h1>Project Tracker</h1>
+      <div class="progressCard">
+        <div class="muted" style="margin-bottom:10px;">Sign in to sync your projects privately.</div>
+        <form id="loginForm" class="composer" autocomplete="off">
+          <input id="emailInput" type="email" placeholder="you@email.com" />
+          <button type="submit">Send link</button>
+        </form>
+        <div id="loginMsg" class="hint muted"></div>
+      </div>
+    </header>
+  </main>
+
+  <!-- APP VIEW -->
+  <main id="appView" class="wrap" style="display:none;">
     <header class="top">
       <div class="titleRow">
         <h1>Project Tracker</h1>
-        <button id="resetBtn" class="ghost" title="Reset current project">Reset</button>
+        <div style="display:flex; gap:10px;">
+          <button id="signOutBtn" class="ghost" type="button">Sign out</button>
+          <button id="resetBtn" class="ghost" type="button" title="Reset current project">Reset</button>
+        </div>
       </div>
 
-      <!-- NEW: Project picker row -->
       <div class="progressCard" style="display:flex; gap:10px; align-items:center; justify-content:space-between;">
         <div style="display:flex; flex-direction:column; gap:6px; flex:1;">
           <div class="muted" style="font-size:12px;">Project</div>
@@ -39,7 +56,7 @@
 
       <form id="addForm" class="composer" autocomplete="off">
         <input id="taskInput" type="text" placeholder="Add a task…" maxlength="140" />
-        <button id="postBtn" type="submit">Post</button>
+        <button type="submit">Post</button>
       </form>
       <div class="hint muted">Tip: use “+ above / + below” to insert tasks anywhere.</div>
     </header>
@@ -50,7 +67,10 @@
     </section>
   </main>
 
+  <!-- Supabase JS (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="./app.js"></script>
+
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
