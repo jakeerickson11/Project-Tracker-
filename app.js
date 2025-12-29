@@ -1,8 +1,8 @@
 // 1) Paste your Supabase credentials here:
-const SUPABASE_URL = "https://yfyddckvjfeqkwoiqcix.supabase.co";
+const SUPABASE_URL = "https://yfyddckvjfeqkwoiqcix.sb.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlmeWRkY2t2amZlcWt3b2lxY2l4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwMzM0MDIsImV4cCI6MjA4MjYwOTQwMn0.K2qiN7vqRfPwN7WCL3j102wxYWzwQ7bp7_LtSGVfEqw";
 
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const sb = window.sb.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const els = {
   loginView: document.getElementById("loginView"),
@@ -176,7 +176,7 @@ function render(){
     delBtn.type = "button";
     delBtn.textContent = "Delete";
     delBtn.addEventListener("click", async () => {
-      const { error } = await supabase.from("tasks").delete().eq("id", t.id);
+      const { error } = await sb.from("tasks").delete().eq("id", t.id);
       if (!error) {
         tasks = tasks.filter(x => x.id !== t.id);
         render();
@@ -198,7 +198,7 @@ function render(){
 
 async function ensureDefaultProject(){
   if (projects.length) return;
-  const { error } = await supabase.from("projects").insert([{
+  const { error } = await sb.from("projects").insert([{
     owner_id: sessionUser.id,
     name: "My Project"
   }]);
@@ -217,7 +217,7 @@ async function addProject(){
   if (name === null) return;
   const trimmed = name.trim() || "Untitled";
 
-  const { error } = await supabase.from("projects").insert([{
+  const { error } = await sb.from("projects").insert([{
     owner_id: sessionUser.id,
     name: trimmed
   }]);
@@ -281,7 +281,7 @@ els.loginForm?.addEventListener("submit", async (e) => {
   if (!email) return;
 
   els.loginMsg.textContent = "Sending link… check your email.";
-  const { error } = await supabase.auth.signInWithOtp({
+  const { error } = await sb.auth.signInWithOtp({
     email,
     options: { emailRedirectTo: window.location.origin + window.location.pathname }
   });
@@ -307,18 +307,18 @@ els.newProjectBtn?.addEventListener("click", addProject);
 els.resetBtn?.addEventListener("click", resetProject);
 
 els.signOutBtn?.addEventListener("click", async () => {
-  await supabase.auth.signOut();
+  await sb.auth.signOut();
   sessionUser = null;
   showLogin("Signed out.");
 });
 
 // Startup
 async function start(){
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await sb.auth.getSession();
   sessionUser = session?.user || null;
 
   // react to auth changes (magic link completes here)
-  supabase.auth.onAuthStateChange(async (_event, newSession) => {
+  sb.auth.onAuthStateChange(async (_event, newSession) => {
     sessionUser = newSession?.user || null;
     if (sessionUser) await loadAndShowApp();
     else showLogin();
