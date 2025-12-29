@@ -290,7 +290,8 @@ els.loginForm?.addEventListener("submit", async (e) => {
   els.loginMsg.textContent = "Sending link… check your email.";
   const { error } = await sb.auth.signInWithOtp({
     email,
-    options: { emailRedirectTo: window.location.origin + window.location.pathname }
+    options: { emailRedirectTo: window.location.href.split("#")[0] }
+
   });
 
   els.loginMsg.textContent = error
@@ -321,6 +322,57 @@ els.signOutBtn?.addEventListener("click", async () => {
 
 // Startup
 async function start(){
+  await handleAuthCallback();
+
+  const { data: { session } } = await sb.auth.getSession();
+  sessionUser = session?.user || null;
+
+  sb.auth.onAuthStateChange(async (_event, newSession) => {
+    sessionUser = newSession?.user || null;
+
+    // Clean hash tokens after login (nice + avoids weird loops)
+    if (window.location.hash && window.location.hash.includes("access_token=")) {
+      history.replaceState(null, document.title, window.location.pathname + window.location.search);
+    }
+
+    if (sessionUser) await loadAndShowApp();
+    else showLogin();
+  });
+
+  if (!sessionUser) return showLogin();
+  await loadAndShowApp();
+}
+
+async function handleAuthCallback() {
+  // If the magic link brought us back with auth params in the URL,
+  // exchange them for a session (so you don't get stuck on login screen).
+  const url = new URL(window.location.href);
+
+  const hasCode = url.searchParams.get("code");
+  const hasTokenHash = window.location.hash && window.location.hash.includes("access_token=");
+
+  try {
+    if (hasCode) {
+      // PKCE flow
+      await sb.auth.exchangeCodeForSession(window.location.href);
+      // Clean URL
+      url.searchParams.delete("code");
+      window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+    } else if (hasTokenHash) {
+      // Implicit flow (older links)
+      // Supabase JS usually auto-detects this, but we’ll clean the hash after session is set.
+      // We'll just let getSession() pick it up, then clean later.
+    }
+  } catch (e) {
+    // If exchange fails, you’ll land on login again.
+    console.warn("Auth callback handling failed:", e);
+  }
+}
+
+
+
+
+  
   const { data: { session } } = await sb.auth.getSession();
   sessionUser = session?.user || null;
 
