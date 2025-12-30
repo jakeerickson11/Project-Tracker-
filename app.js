@@ -44,6 +44,8 @@ let sessionUser = null;
 let activeProjectId = null;
 let projects = [];
 let tasks = []; // tasks for active project only
+let subtasks = []; // all subtasks for active project
+
 
 // =====================
 // Helpers
@@ -106,6 +108,24 @@ function usernameToEmail(username) {
   return `${clean}@project-tracker.local`;
 }
 
+function sortByPosition(arr){
+  return [...arr].sort((a,b) => (a.position ?? 0) - (b.position ?? 0));
+}
+
+function groupSubtasksByTaskId(all){
+  const map = new Map();
+  for (const st of all){
+    if (!map.has(st.task_id)) map.set(st.task_id, []);
+    map.get(st.task_id).push(st);
+  }
+  // sort each list
+  for (const [k, v] of map.entries()){
+    map.set(k, sortByPosition(v));
+  }
+  return map;
+}
+
+
 // =====================
 // Supabase data
 // =====================
@@ -130,6 +150,20 @@ async function fetchTasks(projectId) {
   tasks = data || [];
 }
 
+async function fetchSubtasks(projectId){
+  const { data, error } = await sb
+    .from("subtasks")
+    .select("id, task_id, text, done, position, created_at, updated_at")
+    .eq("project_id", projectId)
+    .order("position", { ascending: true });
+
+  if (error) throw error;
+  subtasks = data || [];
+}
+
+
+
+
 async function ensureDefaultProject() {
   if (projects.length) return;
 
@@ -148,8 +182,10 @@ async function ensureDefaultProject() {
 async function setActiveProject(projectId) {
   activeProjectId = projectId;
   await fetchTasks(activeProjectId);
+  await fetchSubtasks(activeProjectId);
   render();
 }
+
 
 // =====================
 // UI render
@@ -169,6 +205,8 @@ function renderProjectPicker() {
 
 function render() {
   const sorted = sortTasks(tasks);
+  const allItems = [...sorted, ...subtasks];
+
 
   renderProjectPicker();
 
@@ -210,6 +248,8 @@ function render() {
 
     left.appendChild(cb);
     left.appendChild(text);
+    li.appendChild(row);
+
 
     const controls = document.createElement("div");
     controls.className = "controls";
@@ -248,6 +288,81 @@ function render() {
     els.list.appendChild(li);
   }
 }
+
+// Subtasks UI
+const stByTask = groupSubtasksByTaskId(subtasks);
+const stList = stByTask.get(t.id) || [];
+
+const subWrap = document.createElement("div");
+subWrap.style.display = "flex";
+subWrap.style.flexDirection = "column";
+subWrap.style.gap = "8px";
+
+const subHeader = document.createElement("div");
+subHeader.style.display = "flex";
+subHeader.style.justifyContent = "space-between";
+subHeader.style.alignItems = "center";
+subHeader.style.gap = "10px";
+
+const subLabel = document.createElement("div");
+subLabel.className = "muted";
+subLabel.style.fontSize = "12px";
+subLabel.textContent = stList.length ? `Subtasks (${stList.filter(x=>x.done).length}/${stList.length})` : "Subtasks";
+
+const addSubBtn = document.createElement("button");
+addSubBtn.className = "small";
+addSubBtn.type = "button";
+addSubBtn.textContent = "+ subtask";
+addSubBtn.addEventListener("click", () => addSubtask(t.id));
+
+subHeader.appendChild(subLabel);
+subHeader.appendChild(addSubBtn);
+
+subWrap.appendChild(subHeader);
+
+if (stList.length){
+  for (const st of stList){
+    const subRow = document.createElement("div");
+    subRow.style.display = "flex";
+    subRow.style.alignItems = "center";
+    subRow.style.justifyContent = "space-between";
+    subRow.style.gap = "10px";
+    subRow.style.paddingLeft = "34px"; // indent under task checkbox
+
+    const left2 = document.createElement("div");
+    left2.style.display = "flex";
+    left2.style.alignItems = "flex-start";
+    left2.style.gap = "10px";
+    left2.style.minWidth = "0";
+
+    const cb2 = document.createElement("input");
+    cb2.type = "checkbox";
+    cb2.className = "check";
+    cb2.checked = !!st.done;
+    cb2.addEventListener("change", () => toggleSubtask(st.id, cb2.checked));
+
+    const tx2 = document.createElement("div");
+    tx2.className = "text" + (st.done ? " done" : "");
+    tx2.textContent = st.text;
+
+    left2.appendChild(cb2);
+    left2.appendChild(tx2);
+
+    const del2 = document.createElement("button");
+    del2.className = "small danger";
+    del2.type = "button";
+    del2.textContent = "Delete";
+    del2.addEventListener("click", () => deleteSubtask(st.id));
+
+    subRow.appendChild(left2);
+    subRow.appendChild(del2);
+
+    subWrap.appendChild(subRow);
+  }
+}
+
+li.appendChild(subWrap);
+
 
 // =====================
 // Actions
@@ -314,6 +429,51 @@ async function resetProject() {
   tasks = [];
   render();
 }
+
+async function addSubtask(taskId){
+  const txt = prompt("Subtask:");
+  if (txt === null) return;
+  const trimmed = txt.trim();
+  if (!trimmed) return;
+
+  const current = subtasks.filter(s => s.task_id === taskId);
+  const sorted = sortByPosition(current);
+  const position = sorted.length ? (sorted[sorted.length - 1].position + 1000) : 1000;
+
+  const { data, error } = await sb
+    .from("subtasks")
+    .insert([{
+      owner_id: sessionUser.id,
+      project_id: activeProjectId,
+      task_id: taskId,
+      text: trimmed,
+      done: false,
+      position
+    }])
+    .select("id, task_id, text, done, position, created_at, updated_at")
+    .single();
+
+  if (error) return alert("Could not add subtask.");
+
+  subtasks.push(data);
+  render();
+}
+
+async function toggleSubtask(id, done){
+  const { error } = await sb.from("subtasks").update({ done }).eq("id", id);
+  if (error) return alert("Could not update subtask.");
+  const st = subtasks.find(s => s.id === id);
+  if (st) st.done = done;
+  render();
+}
+
+async function deleteSubtask(id){
+  const { error } = await sb.from("subtasks").delete().eq("id", id);
+  if (error) return alert("Could not delete subtask.");
+  subtasks = subtasks.filter(s => s.id !== id);
+  render();
+}
+
 
 // =====================
 // Login (username + password)
