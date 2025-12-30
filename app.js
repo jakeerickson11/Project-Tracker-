@@ -1,6 +1,8 @@
+// =====================
+// Supabase config
+// =====================
 const SUPABASE_URL = "https://yfyddckvjfeqkwoiqcix.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlmeWRkY2t2amZlcWt3b2lxY2l4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwMzM0MDIsImV4cCI6MjA4MjYwOTQwMn0.K2qiN7vqRfPwN7WCL3j102wxYWzwQ7bp7_LtSGVfEqw";
-
 
 // Grab the global Supabase client factory from the CDN
 const { createClient } = window.supabase || {};
@@ -10,16 +12,16 @@ if (!createClient) {
 
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-
+// =====================
+// DOM
+// =====================
 const els = {
   loginView: document.getElementById("loginView"),
   appView: document.getElementById("appView"),
   loginForm: document.getElementById("loginForm"),
-  emailInput: document.getElementById("emailInput"),
-  loginMsg: document.getElementById("loginMsg"),
   userInput: document.getElementById("userInput"),
-passInput: document.getElementById("passInput"),
-loginMsg: document.getElementById("loginMsg"),
+  passInput: document.getElementById("passInput"),
+  loginMsg: document.getElementById("loginMsg"),
 
   signOutBtn: document.getElementById("signOutBtn"),
   resetBtn: document.getElementById("resetBtn"),
@@ -35,41 +37,48 @@ loginMsg: document.getElementById("loginMsg"),
   progressPct: document.getElementById("progressPct"),
 };
 
+// =====================
+// State
+// =====================
 let sessionUser = null;
 let activeProjectId = null;
 let projects = [];
 let tasks = []; // tasks for active project only
 
-function showLogin(msg=""){
-  els.appView.style.display = "none";
-  els.loginView.style.display = "block";
-  els.loginMsg.textContent = msg;
+// =====================
+// Helpers
+// =====================
+function showLogin(msg = "") {
+  if (els.appView) els.appView.style.display = "none";
+  if (els.loginView) els.loginView.style.display = "block";
+  if (els.loginMsg) els.loginMsg.textContent = msg;
 }
 
-function showApp(){
-  els.loginView.style.display = "none";
-  els.appView.style.display = "block";
+function showApp() {
+  if (els.loginView) els.loginView.style.display = "none";
+  if (els.appView) els.appView.style.display = "block";
 }
 
-function sortTasks(arr){
-  return [...arr].sort((a,b) => (a.position ?? 0) - (b.position ?? 0));
+function sortTasks(arr) {
+  return [...arr].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
 }
 
-function calcProgress(arr){
+function calcProgress(arr) {
   const total = arr.length;
-  const done = arr.filter(t => t.done).length;
+  const done = arr.filter((t) => t.done).length;
   const pct = total === 0 ? 0 : Math.round((done / total) * 100);
   return { total, done, pct };
 }
 
-function pickPositionForInsert(sortedTasks, mode, refId){
+// Insert ordering by position gaps
+function pickPositionForInsert(sortedTasks, mode, refId) {
   const STEP = 1000;
   if (sortedTasks.length === 0) return STEP;
 
   if (mode === "top") return (sortedTasks[0].position ?? STEP) - STEP;
   if (mode === "bottom") return (sortedTasks[sortedTasks.length - 1].position ?? STEP) + STEP;
 
-  const idx = sortedTasks.findIndex(t => t.id === refId);
+  const idx = sortedTasks.findIndex((t) => t.id === refId);
   if (idx === -1) return (sortedTasks[sortedTasks.length - 1].position ?? STEP) + STEP;
 
   const current = sortedTasks[idx].position ?? STEP;
@@ -80,15 +89,28 @@ function pickPositionForInsert(sortedTasks, mode, refId){
   }
 
   if (mode === "below") {
-    const next = idx < sortedTasks.length - 1 ? (sortedTasks[idx + 1].position ?? (current + STEP)) : (current + STEP);
+    const next =
+      idx < sortedTasks.length - 1 ? (sortedTasks[idx + 1].position ?? (current + STEP)) : (current + STEP);
     return (current + next) / 2;
   }
 
   return (sortedTasks[sortedTasks.length - 1].position ?? STEP) + STEP;
 }
 
-async function fetchProjects(){
-  const { data, error } = await supabase
+function usernameToEmail(username) {
+  // Convert username to a "fake" email so we never collect real emails.
+  const clean = (username || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "");
+  return `${clean}@project-tracker.local`;
+}
+
+// =====================
+// Supabase data
+// =====================
+async function fetchProjects() {
+  const { data, error } = await sb
     .from("projects")
     .select("id, name, created_at, updated_at")
     .order("created_at", { ascending: true });
@@ -97,8 +119,8 @@ async function fetchProjects(){
   projects = data || [];
 }
 
-async function fetchTasks(projectId){
-  const { data, error } = await supabase
+async function fetchTasks(projectId) {
+  const { data, error } = await sb
     .from("tasks")
     .select("id, text, done, position, created_at, updated_at")
     .eq("project_id", projectId)
@@ -108,9 +130,35 @@ async function fetchTasks(projectId){
   tasks = data || [];
 }
 
-function renderProjectPicker(){
+async function ensureDefaultProject() {
+  if (projects.length) return;
+
+  const { error } = await sb.from("projects").insert([
+    {
+      owner_id: sessionUser.id,
+      name: "My Project",
+    },
+  ]);
+
+  if (error) throw error;
+
+  await fetchProjects();
+}
+
+async function setActiveProject(projectId) {
+  activeProjectId = projectId;
+  await fetchTasks(activeProjectId);
+  render();
+}
+
+// =====================
+// UI render
+// =====================
+function renderProjectPicker() {
+  if (!els.projectSelect) return;
+
   els.projectSelect.innerHTML = "";
-  for (const p of projects){
+  for (const p of projects) {
     const opt = document.createElement("option");
     opt.value = p.id;
     opt.textContent = p.name || "Untitled";
@@ -119,20 +167,22 @@ function renderProjectPicker(){
   }
 }
 
-function render(){
+function render() {
   const sorted = sortTasks(tasks);
 
   renderProjectPicker();
 
   const { total, done, pct } = calcProgress(sorted);
-  els.progressText.textContent = `${done} / ${total} complete`;
-  els.progressPct.textContent = `${pct}%`;
-  els.barFill.style.width = `${pct}%`;
+  if (els.progressText) els.progressText.textContent = `${done} / ${total} complete`;
+  if (els.progressPct) els.progressPct.textContent = `${pct}%`;
+  if (els.barFill) els.barFill.style.width = `${pct}%`;
 
-  els.empty.style.display = sorted.length ? "none" : "block";
+  if (els.empty) els.empty.style.display = sorted.length ? "none" : "block";
+  if (!els.list) return;
+
   els.list.innerHTML = "";
 
-  for (const t of sorted){
+  for (const t of sorted) {
     const li = document.createElement("li");
     li.className = "task";
 
@@ -146,17 +196,12 @@ function render(){
     cb.type = "checkbox";
     cb.className = "check";
     cb.checked = !!t.done;
+
     cb.addEventListener("change", async () => {
-      const { error } = await supabase
-        .from("tasks")
-        .update({ done: cb.checked })
-        .eq("id", t.id);
-      if (!error) {
-        t.done = cb.checked;
-        render();
-      } else {
-        alert("Could not update task.");
-      }
+      const { error } = await sb.from("tasks").update({ done: cb.checked }).eq("id", t.id);
+      if (error) return alert("Could not update task.");
+      t.done = cb.checked;
+      render();
     });
 
     const text = document.createElement("div");
@@ -187,12 +232,9 @@ function render(){
     delBtn.textContent = "Delete";
     delBtn.addEventListener("click", async () => {
       const { error } = await sb.from("tasks").delete().eq("id", t.id);
-      if (!error) {
-        tasks = tasks.filter(x => x.id !== t.id);
-        render();
-      } else {
-        alert("Could not delete task.");
-      }
+      if (error) return alert("Could not delete task.");
+      tasks = tasks.filter((x) => x.id !== t.id);
+      render();
     });
 
     controls.appendChild(aboveBtn);
@@ -202,57 +244,50 @@ function render(){
     row.appendChild(left);
     row.appendChild(controls);
     li.appendChild(row);
+
     els.list.appendChild(li);
   }
 }
 
-async function ensureDefaultProject(){
-  if (projects.length) return;
-  const { error } = await sb.from("projects").insert([{
-    owner_id: sessionUser.id,
-    name: "My Project"
-  }]);
-  if (error) throw error;
-  await fetchProjects();
-}
-
-async function setActiveProject(projectId){
-  activeProjectId = projectId;
-  await fetchTasks(activeProjectId);
-  render();
-}
-
-async function addProject(){
+// =====================
+// Actions
+// =====================
+async function addProject() {
   const name = prompt("New project name:");
   if (name === null) return;
   const trimmed = name.trim() || "Untitled";
 
-  const { error } = await sb.from("projects").insert([{
-    owner_id: sessionUser.id,
-    name: trimmed
-  }]);
+  const { error } = await sb.from("projects").insert([
+    {
+      owner_id: sessionUser.id,
+      name: trimmed,
+    },
+  ]);
+
   if (error) return alert("Could not create project.");
 
   await fetchProjects();
   await setActiveProject(projects[projects.length - 1].id);
 }
 
-async function addTask(text, mode="bottom", refId=null){
+async function addTask(text, mode = "bottom", refId = null) {
   const trimmed = (text || "").trim();
   if (!trimmed) return;
 
   const sorted = sortTasks(tasks);
   const position = pickPositionForInsert(sorted, mode, refId);
 
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from("tasks")
-    .insert([{
-      owner_id: sessionUser.id,
-      project_id: activeProjectId,
-      text: trimmed,
-      done: false,
-      position
-    }])
+    .insert([
+      {
+        owner_id: sessionUser.id,
+        project_id: activeProjectId,
+        text: trimmed,
+        done: false,
+        position,
+      },
+    ])
     .select("id, text, done, position, created_at, updated_at")
     .single();
 
@@ -262,167 +297,125 @@ async function addTask(text, mode="bottom", refId=null){
   render();
 }
 
-function quickInsert(mode, refId){
+function quickInsert(mode, refId) {
   const txt = prompt("Task:");
   if (txt === null) return;
   addTask(txt, mode, refId);
 }
 
-async function resetProject(){
-  const project = projects.find(p => p.id === activeProjectId);
+async function resetProject() {
+  const project = projects.find((p) => p.id === activeProjectId);
   const ok = confirm(`Reset and delete all tasks in "${project?.name || "this project"}"?`);
   if (!ok) return;
 
-  const { error } = await supabase
-    .from("tasks")
-    .delete()
-    .eq("project_id", activeProjectId);
-
+  const { error } = await sb.from("tasks").delete().eq("project_id", activeProjectId);
   if (error) return alert("Could not reset project.");
 
   tasks = [];
   render();
 }
 
-function usernameToEmail(username) {
-  // turn "jake" into "jake@project-tracker.local"
-  const clean = (username || "").trim().toLowerCase().replace(/[^a-z0-9._-]/g, "");
-  return `${clean}@project-tracker.local`;
-}
-
-els.loginForm?.addEventListener("submit", async (e) => {
-  e.preventDefault();
-
-  const username = (els.userInput.value || "").trim();
-  const password = (els.passInput.value || "");
-
-  if (!username || !password) {
-    els.loginMsg.textContent = "Enter username + password.";
-    return;
-  }
-
+// =====================
+// Login (username + password)
+// =====================
+async function signInOrSignUp(username, password) {
   const email = usernameToEmail(username);
 
-  // 1) Try sign in
-  els.loginMsg.textContent = "Signing in…";
+  // Try sign in
   let { data, error } = await sb.auth.signInWithPassword({ email, password });
 
-  // 2) If user doesn't exist yet, auto-signup once
+  // If no account yet, create it and sign in
   if (error && /invalid login credentials/i.test(error.message)) {
-    els.loginMsg.textContent = "Creating account…";
-
     const signup = await sb.auth.signUp({ email, password });
+    if (signup.error) throw signup.error;
 
-    if (signup.error) {
-      els.loginMsg.textContent = signup.error.message || "Could not create account.";
+    const signin2 = await sb.auth.signInWithPassword({ email, password });
+    if (signin2.error) throw signin2.error;
+    data = signin2.data;
+  } else if (error) {
+    throw error;
+  }
+
+  return data;
+}
+
+// =====================
+// Wire up events
+// =====================
+if (els.loginForm) {
+  els.loginForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const username = (els.userInput?.value || "").trim();
+    const password = els.passInput?.value || "";
+
+    if (!username || !password) {
+      if (els.loginMsg) els.loginMsg.textContent = "Enter username + password.";
       return;
     }
 
-    // Now sign in (some configs sign in automatically, but we’ll be explicit)
-    const signin2 = await sb.auth.signInWithPassword({ email, password });
-    data = signin2.data;
-    error = signin2.error;
-  }
+    if (els.loginMsg) els.loginMsg.textContent = "Signing in…";
 
-  if (error) {
-    els.loginMsg.textContent = error.message || "Login failed.";
-    return;
-  }
-
-  els.loginMsg.textContent = "Signed in.";
-  // auth state listener will take over and load the app
-});
-
-
-// App events
-els.form?.addEventListener("submit", (e) => {
-  e.preventDefault();
-  addTask(els.input.value, "bottom");
-  els.input.value = "";
-  els.input.focus();
-});
-
-els.projectSelect?.addEventListener("change", async () => {
-  await setActiveProject(els.projectSelect.value);
-});
-
-els.newProjectBtn?.addEventListener("click", addProject);
-els.resetBtn?.addEventListener("click", resetProject);
-
-els.signOutBtn?.addEventListener("click", async () => {
-  await sb.auth.signOut();
-  sessionUser = null;
-  showLogin("Signed out.");
-});
-
-// Startup
-async function start(){
-  const { data: { session } } = await sb.auth.getSession();
-  sessionUser = session?.user || null;
-
-  sb.auth.onAuthStateChange(async (_event, newSession) => {
-    sessionUser = newSession?.user || null;
-    if (sessionUser) await loadAndShowApp();
-    else showLogin();
-  });
-
-  if (!sessionUser) return showLogin();
-  await loadAndShowApp();
-}
-start();
-
-
-async function handleAuthCallback() {
-  // If the magic link brought us back with auth params in the URL,
-  // exchange them for a session (so you don't get stuck on login screen).
-  const url = new URL(window.location.href);
-
-  const hasCode = url.searchParams.get("code");
-  const hasTokenHash = window.location.hash && window.location.hash.includes("access_token=");
-
-  try {
-    if (hasCode) {
-      // PKCE flow
-      await sb.auth.exchangeCodeForSession(window.location.href);
-      // Clean URL
-      url.searchParams.delete("code");
-      window.history.replaceState({}, document.title, url.pathname + url.search + url.hash);
-    } else if (hasTokenHash) {
-      // Implicit flow (older links)
-      // Supabase JS usually auto-detects this, but we’ll clean the hash after session is set.
-      // We'll just let getSession() pick it up, then clean later.
+    try {
+      await signInOrSignUp(username, password);
+      if (els.loginMsg) els.loginMsg.textContent = "Signed in.";
+      // onAuthStateChange will load the app
+    } catch (err) {
+      if (els.loginMsg) els.loginMsg.textContent = err?.message || "Login failed.";
     }
-  } catch (e) {
-    // If exchange fails, you’ll land on login again.
-    console.warn("Auth callback handling failed:", e);
-  }
-}
-
-
-
-
-  
-  const { data: { session } } = await sb.auth.getSession();
-  sessionUser = session?.user || null;
-
-  // react to auth changes (magic link completes here)
-  sb.auth.onAuthStateChange(async (_event, newSession) => {
-    sessionUser = newSession?.user || null;
-    if (sessionUser) await loadAndShowApp();
-    else showLogin();
   });
-
-  if (!sessionUser) return showLogin();
-  await loadAndShowApp();
 }
 
-async function loadAndShowApp(){
+if (els.form) {
+  els.form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    addTask(els.input.value, "bottom");
+    els.input.value = "";
+    els.input.focus();
+  });
+}
+
+if (els.projectSelect) {
+  els.projectSelect.addEventListener("change", async () => {
+    await setActiveProject(els.projectSelect.value);
+  });
+}
+
+if (els.newProjectBtn) els.newProjectBtn.addEventListener("click", addProject);
+if (els.resetBtn) els.resetBtn.addEventListener("click", resetProject);
+
+if (els.signOutBtn) {
+  els.signOutBtn.addEventListener("click", async () => {
+    await sb.auth.signOut();
+    sessionUser = null;
+    showLogin("Signed out.");
+  });
+}
+
+// =====================
+// Startup
+// =====================
+async function loadAndShowApp() {
   showApp();
   await fetchProjects();
   await ensureDefaultProject();
-  // pick first project by default
   activeProjectId = projects[0].id;
   await setActiveProject(activeProjectId);
 }
 
+async function start() {
+  const { data: { session } } = await sb.auth.getSession();
+  sessionUser = session?.user || null;
+
+  sb.auth.onAuthStateChange(async (_event, newSession) => {
+    sessionUser = newSession?.user || null;
+    if (sessionUser) await loadAndShowApp();
+    else showLogin();
+  });
+
+  if (!sessionUser) return showLogin();
+  await loadAndShowApp();
+}
+
 start();
+
