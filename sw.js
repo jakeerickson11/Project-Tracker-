@@ -1,4 +1,4 @@
-const CACHE_NAME = "project-tracker-cache-v12";
+const CACHE_NAME = "project-tracker-cache-v13";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json"];
 
 self.addEventListener("install", (event) => {
