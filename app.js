@@ -17,6 +17,9 @@ const els = {
   loginForm: document.getElementById("loginForm"),
   emailInput: document.getElementById("emailInput"),
   loginMsg: document.getElementById("loginMsg"),
+  userInput: document.getElementById("userInput"),
+passInput: document.getElementById("passInput"),
+loginMsg: document.getElementById("loginMsg"),
 
   signOutBtn: document.getElementById("signOutBtn"),
   resetBtn: document.getElementById("resetBtn"),
@@ -281,23 +284,55 @@ async function resetProject(){
   render();
 }
 
-// Auth: login via magic link
+function usernameToEmail(username) {
+  // turn "jake" into "jake@project-tracker.local"
+  const clean = (username || "").trim().toLowerCase().replace(/[^a-z0-9._-]/g, "");
+  return `${clean}@project-tracker.local`;
+}
+
 els.loginForm?.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const email = (els.emailInput.value || "").trim();
-  if (!email) return;
 
-  els.loginMsg.textContent = "Sending link… check your email.";
-  const { error } = await sb.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.href.split("#")[0] }
+  const username = (els.userInput.value || "").trim();
+  const password = (els.passInput.value || "");
 
-  });
+  if (!username || !password) {
+    els.loginMsg.textContent = "Enter username + password.";
+    return;
+  }
 
-  els.loginMsg.textContent = error
-    ? "Could not send link. Check your Supabase Auth URL settings."
-    : "Link sent! Open your email and tap the sign-in link.";
+  const email = usernameToEmail(username);
+
+  // 1) Try sign in
+  els.loginMsg.textContent = "Signing in…";
+  let { data, error } = await sb.auth.signInWithPassword({ email, password });
+
+  // 2) If user doesn't exist yet, auto-signup once
+  if (error && /invalid login credentials/i.test(error.message)) {
+    els.loginMsg.textContent = "Creating account…";
+
+    const signup = await sb.auth.signUp({ email, password });
+
+    if (signup.error) {
+      els.loginMsg.textContent = signup.error.message || "Could not create account.";
+      return;
+    }
+
+    // Now sign in (some configs sign in automatically, but we’ll be explicit)
+    const signin2 = await sb.auth.signInWithPassword({ email, password });
+    data = signin2.data;
+    error = signin2.error;
+  }
+
+  if (error) {
+    els.loginMsg.textContent = error.message || "Login failed.";
+    return;
+  }
+
+  els.loginMsg.textContent = "Signed in.";
+  // auth state listener will take over and load the app
 });
+
 
 // App events
 els.form?.addEventListener("submit", (e) => {
@@ -322,19 +357,11 @@ els.signOutBtn?.addEventListener("click", async () => {
 
 // Startup
 async function start(){
-  await handleAuthCallback();
-
   const { data: { session } } = await sb.auth.getSession();
   sessionUser = session?.user || null;
 
   sb.auth.onAuthStateChange(async (_event, newSession) => {
     sessionUser = newSession?.user || null;
-
-    // Clean hash tokens after login (nice + avoids weird loops)
-    if (window.location.hash && window.location.hash.includes("access_token=")) {
-      history.replaceState(null, document.title, window.location.pathname + window.location.search);
-    }
-
     if (sessionUser) await loadAndShowApp();
     else showLogin();
   });
@@ -342,6 +369,8 @@ async function start(){
   if (!sessionUser) return showLogin();
   await loadAndShowApp();
 }
+start();
+
 
 async function handleAuthCallback() {
   // If the magic link brought us back with auth params in the URL,
