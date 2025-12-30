@@ -203,27 +203,26 @@ function renderProjectPicker() {
   }
 }
 
-function render() {
-  const sorted = sortTasks(tasks);
-  const allItems = [...sorted, ...subtasks];
+function render(){
+  const sortedTasks = sortTasks(tasks);
+  const stByTask = groupSubtasksByTaskId(subtasks);
 
+  // progress (tasks + subtasks)
+  const allItems = [...sortedTasks, ...subtasks];
+  const { total, done, pct } = calcProgress(allItems);
 
-  renderProjectPicker();
+  els.progressText.textContent = `${done} / ${total} complete`;
+  els.progressPct.textContent = `${pct}%`;
+  els.barFill.style.width = `${pct}%`;
 
-  const { total, done, pct } = calcProgress(sorted);
-  if (els.progressText) els.progressText.textContent = `${done} / ${total} complete`;
-  if (els.progressPct) els.progressPct.textContent = `${pct}%`;
-  if (els.barFill) els.barFill.style.width = `${pct}%`;
-
-  if (els.empty) els.empty.style.display = sorted.length ? "none" : "block";
-  if (!els.list) return;
-
+  els.empty.style.display = sortedTasks.length ? "none" : "block";
   els.list.innerHTML = "";
 
-  for (const t of sorted) {
+  for (const t of sortedTasks){
     const li = document.createElement("li");
     li.className = "task";
 
+    // --- Task Row ---
     const row = document.createElement("div");
     row.className = "row";
 
@@ -234,7 +233,6 @@ function render() {
     cb.type = "checkbox";
     cb.className = "check";
     cb.checked = !!t.done;
-
     cb.addEventListener("change", async () => {
       const { error } = await sb.from("tasks").update({ done: cb.checked }).eq("id", t.id);
       if (error) return alert("Could not update task.");
@@ -248,8 +246,6 @@ function render() {
 
     left.appendChild(cb);
     left.appendChild(text);
-    li.appendChild(row);
-
 
     const controls = document.createElement("div");
     controls.className = "controls";
@@ -273,7 +269,9 @@ function render() {
     delBtn.addEventListener("click", async () => {
       const { error } = await sb.from("tasks").delete().eq("id", t.id);
       if (error) return alert("Could not delete task.");
-      tasks = tasks.filter((x) => x.id !== t.id);
+      tasks = tasks.filter(x => x.id !== t.id);
+      // also remove local subtasks (DB cascade will handle server side)
+      subtasks = subtasks.filter(s => s.task_id !== t.id);
       render();
     });
 
@@ -283,11 +281,90 @@ function render() {
 
     row.appendChild(left);
     row.appendChild(controls);
+
     li.appendChild(row);
 
+    // --- Subtasks Section ---
+    const stList = stByTask.get(t.id) || [];
+
+    const subWrap = document.createElement("div");
+    subWrap.style.display = "flex";
+    subWrap.style.flexDirection = "column";
+    subWrap.style.gap = "8px";
+
+    const subHeader = document.createElement("div");
+    subHeader.style.display = "flex";
+    subHeader.style.justifyContent = "space-between";
+    subHeader.style.alignItems = "center";
+    subHeader.style.gap = "10px";
+
+    const subLabel = document.createElement("div");
+    subLabel.className = "muted";
+    subLabel.style.fontSize = "12px";
+    subLabel.textContent = stList.length
+      ? `Subtasks (${stList.filter(x => x.done).length}/${stList.length})`
+      : "Subtasks";
+
+    const addSubBtn = document.createElement("button");
+    addSubBtn.className = "small";
+    addSubBtn.type = "button";
+    addSubBtn.textContent = "+ subtask";
+    addSubBtn.addEventListener("click", () => addSubtask(t.id));
+
+    subHeader.appendChild(subLabel);
+    subHeader.appendChild(addSubBtn);
+    subWrap.appendChild(subHeader);
+
+    if (stList.length){
+      for (const st of stList){
+        const subRow = document.createElement("div");
+        subRow.style.display = "flex";
+        subRow.style.alignItems = "center";
+        subRow.style.justifyContent = "space-between";
+        subRow.style.gap = "10px";
+        subRow.style.paddingLeft = "34px";
+
+        const left2 = document.createElement("div");
+        left2.style.display = "flex";
+        left2.style.alignItems = "flex-start";
+        left2.style.gap = "10px";
+        left2.style.minWidth = "0";
+
+        const cb2 = document.createElement("input");
+        cb2.type = "checkbox";
+        cb2.className = "check";
+        cb2.checked = !!st.done;
+        cb2.addEventListener("change", async () => {
+          await toggleSubtask(st.id, cb2.checked);
+        });
+
+        const tx2 = document.createElement("div");
+        tx2.className = "text" + (st.done ? " done" : "");
+        tx2.textContent = st.text;
+
+        left2.appendChild(cb2);
+        left2.appendChild(tx2);
+
+        const del2 = document.createElement("button");
+        del2.className = "small danger";
+        del2.type = "button";
+        del2.textContent = "Delete";
+        del2.addEventListener("click", async () => {
+          await deleteSubtask(st.id);
+        });
+
+        subRow.appendChild(left2);
+        subRow.appendChild(del2);
+
+        subWrap.appendChild(subRow);
+      }
+    }
+
+    li.appendChild(subWrap);
     els.list.appendChild(li);
   }
 }
+
 
 // Subtasks UI
 const stByTask = groupSubtasksByTaskId(subtasks);
@@ -458,6 +535,22 @@ async function addSubtask(taskId){
   subtasks.push(data);
   render();
 }
+
+async function toggleSubtask(id, done){
+  const { error } = await sb.from("subtasks").update({ done }).eq("id", id);
+  if (error) return alert("Could not update subtask.");
+  const st = subtasks.find(s => s.id === id);
+  if (st) st.done = done;
+  render();
+}
+
+async function deleteSubtask(id){
+  const { error } = await sb.from("subtasks").delete().eq("id", id);
+  if (error) return alert("Could not delete subtask.");
+  subtasks = subtasks.filter(s => s.id !== id);
+  render();
+}
+
 
 async function toggleSubtask(id, done){
   const { error } = await sb.from("subtasks").update({ done }).eq("id", id);
