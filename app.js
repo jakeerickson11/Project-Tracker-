@@ -4,12 +4,10 @@
 const SUPABASE_URL = "https://yfyddckvjfeqkwoiqcix.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlmeWRkY2t2amZlcWt3b2lxY2l4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwMzM0MDIsImV4cCI6MjA4MjYwOTQwMn0.K2qiN7vqRfPwN7WCL3j102wxYWzwQ7bp7_LtSGVfEqw";
 
-// Grab the global Supabase client factory from the CDN
 const { createClient } = window.supabase || {};
 if (!createClient) {
-  throw new Error("Supabase library not loaded. Check the <script> tag and its order in index.html.");
+  throw new Error("Supabase library not loaded. Check your <script> order in index.html.");
 }
-
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // =====================
@@ -43,12 +41,11 @@ const els = {
 let sessionUser = null;
 let activeProjectId = null;
 let projects = [];
-let tasks = []; // tasks for active project only
-let subtasks = []; // all subtasks for active project
-
+let tasks = [];
+let subtasks = [];
 
 // =====================
-// Helpers
+// UI helpers
 // =====================
 function showLogin(msg = "") {
   if (els.appView) els.appView.style.display = "none";
@@ -61,46 +58,59 @@ function showApp() {
   if (els.appView) els.appView.style.display = "block";
 }
 
-function sortTasks(arr) {
+function sortByPosition(arr) {
   return [...arr].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
 }
 
 function calcProgress(arr) {
   const total = arr.length;
-  const done = arr.filter((t) => t.done).length;
+  const done = arr.filter((x) => x.done).length;
   const pct = total === 0 ? 0 : Math.round((done / total) * 100);
   return { total, done, pct };
 }
 
-// Insert ordering by position gaps
-function pickPositionForInsert(sortedTasks, mode, refId) {
+function pickPositionForInsert(sortedItems, mode, refId) {
   const STEP = 1000;
-  if (sortedTasks.length === 0) return STEP;
+  if (sortedItems.length === 0) return STEP;
 
-  if (mode === "top") return (sortedTasks[0].position ?? STEP) - STEP;
-  if (mode === "bottom") return (sortedTasks[sortedTasks.length - 1].position ?? STEP) + STEP;
+  if (mode === "top") return (sortedItems[0].position ?? STEP) - STEP;
+  if (mode === "bottom") return (sortedItems[sortedItems.length - 1].position ?? STEP) + STEP;
 
- 
-  if (idx === -1) return (sortedTasks[sortedTasks.length - 1].position ?? STEP) + STEP;
+  const idx = sortedItems.findIndex((x) => x.id === refId);
+  if (idx === -1) return (sortedItems[sortedItems.length - 1].position ?? STEP) + STEP;
 
-  const current = sortedTasks[idx].position ?? STEP;
+  const current = sortedItems[idx].position ?? STEP;
 
   if (mode === "above") {
-    const prev = idx > 0 ? (sortedTasks[idx - 1].position ?? (current - STEP)) : (current - STEP);
+    const prev = idx > 0 ? (sortedItems[idx - 1].position ?? (current - STEP)) : (current - STEP);
     return (prev + current) / 2;
   }
 
   if (mode === "below") {
     const next =
-      idx < sortedTasks.length - 1 ? (sortedTasks[idx + 1].position ?? (current + STEP)) : (current + STEP);
+      idx < sortedItems.length - 1 ? (sortedItems[idx + 1].position ?? (current + STEP)) : (current + STEP);
     return (current + next) / 2;
   }
 
-  return (sortedTasks[sortedTasks.length - 1].position ?? STEP) + STEP;
+  return (sortedItems[sortedItems.length - 1].position ?? STEP) + STEP;
 }
 
+function groupSubtasksByTaskId(all) {
+  const map = new Map();
+  for (const st of all) {
+    if (!map.has(st.task_id)) map.set(st.task_id, []);
+    map.get(st.task_id).push(st);
+  }
+  for (const [k, v] of map.entries()) {
+    map.set(k, sortByPosition(v));
+  }
+  return map;
+}
+
+// =====================
+// Auth (username+password)
+// =====================
 function usernameToEmail(username) {
-  // Convert username to a "fake" email so we never collect real emails.
   const clean = (username || "")
     .trim()
     .toLowerCase()
@@ -108,26 +118,26 @@ function usernameToEmail(username) {
   return `${clean}@project-tracker.local`;
 }
 
-function sortByPosition(arr){
-  return [...arr].sort((a,b) => (a.position ?? 0) - (b.position ?? 0));
-}
+async function signInOrSignUp(username, password) {
+  const email = usernameToEmail(username);
 
-function groupSubtasksByTaskId(all){
-  const map = new Map();
-  for (const st of all){
-    if (!map.has(st.task_id)) map.set(st.task_id, []);
-    map.get(st.task_id).push(st);
-  }
-  // sort each list
-  for (const [k, v] of map.entries()){
-    map.set(k, sortByPosition(v));
-  }
-  return map;
-}
+  let { error } = await sb.auth.signInWithPassword({ email, password });
 
+  if (error && /invalid login credentials/i.test(error.message)) {
+    const signup = await sb.auth.signUp({ email, password });
+    if (signup.error) throw signup.error;
+
+    const signin2 = await sb.auth.signInWithPassword({ email, password });
+    if (signin2.error) throw signin2.error;
+
+    return;
+  }
+
+  if (error) throw error;
+}
 
 // =====================
-// Supabase data
+// Data fetch
 // =====================
 async function fetchProjects() {
   const { data, error } = await sb
@@ -150,7 +160,7 @@ async function fetchTasks(projectId) {
   tasks = data || [];
 }
 
-async function fetchSubtasks(projectId){
+async function fetchSubtasks(projectId) {
   const { data, error } = await sb
     .from("subtasks")
     .select("id, task_id, text, done, position, created_at, updated_at")
@@ -161,21 +171,14 @@ async function fetchSubtasks(projectId){
   subtasks = data || [];
 }
 
-
-
-
 async function ensureDefaultProject() {
   if (projects.length) return;
 
   const { error } = await sb.from("projects").insert([
-    {
-      owner_id: sessionUser.id,
-      name: "My Project",
-    },
+    { owner_id: sessionUser.id, name: "My Project" }
   ]);
 
   if (error) throw error;
-
   await fetchProjects();
 }
 
@@ -186,13 +189,116 @@ async function setActiveProject(projectId) {
   render();
 }
 
+// =====================
+// Actions (projects/tasks/subtasks)
+// =====================
+async function addProject() {
+  const name = prompt("New project name:");
+  if (name === null) return;
+  const trimmed = name.trim() || "Untitled";
+
+  const { error } = await sb.from("projects").insert([
+    { owner_id: sessionUser.id, name: trimmed }
+  ]);
+
+  if (error) return alert("Could not create project.");
+  await fetchProjects();
+  await setActiveProject(projects[projects.length - 1].id);
+}
+
+async function addTask(text, mode = "bottom", refId = null) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return;
+
+  const sorted = sortByPosition(tasks);
+  const position = pickPositionForInsert(sorted, mode, refId);
+
+  const { data, error } = await sb
+    .from("tasks")
+    .insert([{
+      owner_id: sessionUser.id,
+      project_id: activeProjectId,
+      text: trimmed,
+      done: false,
+      position
+    }])
+    .select("id, text, done, position, created_at, updated_at")
+    .single();
+
+  if (error) return alert("Could not add task.");
+
+  tasks.push(data);
+  render();
+}
+
+function quickInsert(mode, refId) {
+  const txt = prompt("Task:");
+  if (txt === null) return;
+  addTask(txt, mode, refId);
+}
+
+async function resetProject() {
+  const project = projects.find((p) => p.id === activeProjectId);
+  const ok = confirm(`Reset and delete all tasks in "${project?.name || "this project"}"?`);
+  if (!ok) return;
+
+  const delTasks = await sb.from("tasks").delete().eq("project_id", activeProjectId);
+  if (delTasks.error) return alert("Could not reset project.");
+
+  // cascades remove subtasks server-side; clear local
+  tasks = [];
+  subtasks = [];
+  render();
+}
+
+async function addSubtask(taskId) {
+  const txt = prompt("Subtask:");
+  if (txt === null) return;
+  const trimmed = txt.trim();
+  if (!trimmed) return;
+
+  const current = subtasks.filter((s) => s.task_id === taskId);
+  const sorted = sortByPosition(current);
+  const position = sorted.length ? (sorted[sorted.length - 1].position + 1000) : 1000;
+
+  const { data, error } = await sb
+    .from("subtasks")
+    .insert([{
+      owner_id: sessionUser.id,
+      project_id: activeProjectId,
+      task_id: taskId,
+      text: trimmed,
+      done: false,
+      position
+    }])
+    .select("id, task_id, text, done, position, created_at, updated_at")
+    .single();
+
+  if (error) return alert("Could not add subtask.");
+
+  subtasks.push(data);
+  render();
+}
+
+async function toggleSubtask(id, done) {
+  const { error } = await sb.from("subtasks").update({ done }).eq("id", id);
+  if (error) return alert("Could not update subtask.");
+  const st = subtasks.find((s) => s.id === id);
+  if (st) st.done = done;
+  render();
+}
+
+async function deleteSubtask(id) {
+  const { error } = await sb.from("subtasks").delete().eq("id", id);
+  if (error) return alert("Could not delete subtask.");
+  subtasks = subtasks.filter((s) => s.id !== id);
+  render();
+}
 
 // =====================
-// UI render
+// Render
 // =====================
 function renderProjectPicker() {
-  if (!els.projectSelect) return;
-
   els.projectSelect.innerHTML = "";
   for (const p of projects) {
     const opt = document.createElement("option");
@@ -203,11 +309,12 @@ function renderProjectPicker() {
   }
 }
 
-function render(){
-  const sortedTasks = sortTasks(tasks);
+function render() {
+  const sortedTasks = sortByPosition(tasks);
   const stByTask = groupSubtasksByTaskId(subtasks);
 
-  // progress (tasks + subtasks)
+  renderProjectPicker();
+
   const allItems = [...sortedTasks, ...subtasks];
   const { total, done, pct } = calcProgress(allItems);
 
@@ -218,11 +325,11 @@ function render(){
   els.empty.style.display = sortedTasks.length ? "none" : "block";
   els.list.innerHTML = "";
 
-  for (const t of sortedTasks){
+  for (const t of sortedTasks) {
     const li = document.createElement("li");
     li.className = "task";
 
-    // --- Task Row ---
+    // Task Row
     const row = document.createElement("div");
     row.className = "row";
 
@@ -269,9 +376,8 @@ function render(){
     delBtn.addEventListener("click", async () => {
       const { error } = await sb.from("tasks").delete().eq("id", t.id);
       if (error) return alert("Could not delete task.");
-      tasks = tasks.filter(x => x.id !== t.id);
-      // also remove local subtasks (DB cascade will handle server side)
-      subtasks = subtasks.filter(s => s.task_id !== t.id);
+      tasks = tasks.filter((x) => x.id !== t.id);
+      subtasks = subtasks.filter((s) => s.task_id !== t.id);
       render();
     });
 
@@ -281,10 +387,9 @@ function render(){
 
     row.appendChild(left);
     row.appendChild(controls);
-
     li.appendChild(row);
 
-    // --- Subtasks Section ---
+    // Subtasks
     const stList = stByTask.get(t.id) || [];
 
     const subWrap = document.createElement("div");
@@ -302,7 +407,7 @@ function render(){
     subLabel.className = "muted";
     subLabel.style.fontSize = "12px";
     subLabel.textContent = stList.length
-      ? `Subtasks (${stList.filter(x => x.done).length}/${stList.length})`
+      ? `Subtasks (${stList.filter((x) => x.done).length}/${stList.length})`
       : "Subtasks";
 
     const addSubBtn = document.createElement("button");
@@ -315,49 +420,42 @@ function render(){
     subHeader.appendChild(addSubBtn);
     subWrap.appendChild(subHeader);
 
-    if (stList.length){
-      for (const st of stList){
-        const subRow = document.createElement("div");
-        subRow.style.display = "flex";
-        subRow.style.alignItems = "center";
-        subRow.style.justifyContent = "space-between";
-        subRow.style.gap = "10px";
-        subRow.style.paddingLeft = "34px";
+    for (const st of stList) {
+      const subRow = document.createElement("div");
+      subRow.style.display = "flex";
+      subRow.style.alignItems = "center";
+      subRow.style.justifyContent = "space-between";
+      subRow.style.gap = "10px";
+      subRow.style.paddingLeft = "34px";
 
-        const left2 = document.createElement("div");
-        left2.style.display = "flex";
-        left2.style.alignItems = "flex-start";
-        left2.style.gap = "10px";
-        left2.style.minWidth = "0";
+      const left2 = document.createElement("div");
+      left2.style.display = "flex";
+      left2.style.alignItems = "flex-start";
+      left2.style.gap = "10px";
+      left2.style.minWidth = "0";
 
-        const cb2 = document.createElement("input");
-        cb2.type = "checkbox";
-        cb2.className = "check";
-        cb2.checked = !!st.done;
-        cb2.addEventListener("change", async () => {
-          await toggleSubtask(st.id, cb2.checked);
-        });
+      const cb2 = document.createElement("input");
+      cb2.type = "checkbox";
+      cb2.className = "check";
+      cb2.checked = !!st.done;
+      cb2.addEventListener("change", () => toggleSubtask(st.id, cb2.checked));
 
-        const tx2 = document.createElement("div");
-        tx2.className = "text" + (st.done ? " done" : "");
-        tx2.textContent = st.text;
+      const tx2 = document.createElement("div");
+      tx2.className = "text" + (st.done ? " done" : "");
+      tx2.textContent = st.text;
 
-        left2.appendChild(cb2);
-        left2.appendChild(tx2);
+      left2.appendChild(cb2);
+      left2.appendChild(tx2);
 
-        const del2 = document.createElement("button");
-        del2.className = "small danger";
-        del2.type = "button";
-        del2.textContent = "Delete";
-        del2.addEventListener("click", async () => {
-          await deleteSubtask(st.id);
-        });
+      const del2 = document.createElement("button");
+      del2.className = "small danger";
+      del2.type = "button";
+      del2.textContent = "Delete";
+      del2.addEventListener("click", () => deleteSubtask(st.id));
 
-        subRow.appendChild(left2);
-        subRow.appendChild(del2);
-
-        subWrap.appendChild(subRow);
-      }
+      subRow.appendChild(left2);
+      subRow.appendChild(del2);
+      subWrap.appendChild(subRow);
     }
 
     li.appendChild(subWrap);
@@ -365,235 +463,8 @@ function render(){
   }
 }
 
-
-// Subtasks UI
-const stByTask = groupSubtasksByTaskId(subtasks);
-const stList = stByTask.get(t.id) || [];
-
-const subWrap = document.createElement("div");
-subWrap.style.display = "flex";
-subWrap.style.flexDirection = "column";
-subWrap.style.gap = "8px";
-
-const subHeader = document.createElement("div");
-subHeader.style.display = "flex";
-subHeader.style.justifyContent = "space-between";
-subHeader.style.alignItems = "center";
-subHeader.style.gap = "10px";
-
-const subLabel = document.createElement("div");
-subLabel.className = "muted";
-subLabel.style.fontSize = "12px";
-subLabel.textContent = stList.length ? `Subtasks (${stList.filter(x=>x.done).length}/${stList.length})` : "Subtasks";
-
-const addSubBtn = document.createElement("button");
-addSubBtn.className = "small";
-addSubBtn.type = "button";
-addSubBtn.textContent = "+ subtask";
-addSubBtn.addEventListener("click", () => addSubtask(t.id));
-
-subHeader.appendChild(subLabel);
-subHeader.appendChild(addSubBtn);
-
-subWrap.appendChild(subHeader);
-
-if (stList.length){
-  for (const st of stList){
-    const subRow = document.createElement("div");
-    subRow.style.display = "flex";
-    subRow.style.alignItems = "center";
-    subRow.style.justifyContent = "space-between";
-    subRow.style.gap = "10px";
-    subRow.style.paddingLeft = "34px"; // indent under task checkbox
-
-    const left2 = document.createElement("div");
-    left2.style.display = "flex";
-    left2.style.alignItems = "flex-start";
-    left2.style.gap = "10px";
-    left2.style.minWidth = "0";
-
-    const cb2 = document.createElement("input");
-    cb2.type = "checkbox";
-    cb2.className = "check";
-    cb2.checked = !!st.done;
-    cb2.addEventListener("change", () => toggleSubtask(st.id, cb2.checked));
-
-    const tx2 = document.createElement("div");
-    tx2.className = "text" + (st.done ? " done" : "");
-    tx2.textContent = st.text;
-
-    left2.appendChild(cb2);
-    left2.appendChild(tx2);
-
-    const del2 = document.createElement("button");
-    del2.className = "small danger";
-    del2.type = "button";
-    del2.textContent = "Delete";
-    del2.addEventListener("click", () => deleteSubtask(st.id));
-
-    subRow.appendChild(left2);
-    subRow.appendChild(del2);
-
-    subWrap.appendChild(subRow);
-  }
-}
-
-li.appendChild(subWrap);
-
-
 // =====================
-// Actions
-// =====================
-async function addProject() {
-  const name = prompt("New project name:");
-  if (name === null) return;
-  const trimmed = name.trim() || "Untitled";
-
-  const { error } = await sb.from("projects").insert([
-    {
-      owner_id: sessionUser.id,
-      name: trimmed,
-    },
-  ]);
-
-  if (error) return alert("Could not create project.");
-
-  await fetchProjects();
-  await setActiveProject(projects[projects.length - 1].id);
-}
-
-async function addTask(text, mode = "bottom", refId = null) {
-  const trimmed = (text || "").trim();
-  if (!trimmed) return;
-
-  const sorted = sortTasks(tasks);
-  const position = pickPositionForInsert(sorted, mode, refId);
-
-  const { data, error } = await sb
-    .from("tasks")
-    .insert([
-      {
-        owner_id: sessionUser.id,
-        project_id: activeProjectId,
-        text: trimmed,
-        done: false,
-        position,
-      },
-    ])
-    .select("id, text, done, position, created_at, updated_at")
-    .single();
-
-  if (error) return alert("Could not add task.");
-
-  tasks.push(data);
-  render();
-}
-
-function quickInsert(mode, refId) {
-  const txt = prompt("Task:");
-  if (txt === null) return;
-  addTask(txt, mode, refId);
-}
-
-async function resetProject() {
-  const project = projects.find((p) => p.id === activeProjectId);
-  const ok = confirm(`Reset and delete all tasks in "${project?.name || "this project"}"?`);
-  if (!ok) return;
-
-  const { error } = await sb.from("tasks").delete().eq("project_id", activeProjectId);
-  if (error) return alert("Could not reset project.");
-
-  tasks = [];
-  render();
-}
-
-async function addSubtask(taskId){
-  const txt = prompt("Subtask:");
-  if (txt === null) return;
-  const trimmed = txt.trim();
-  if (!trimmed) return;
-
-  const current = subtasks.filter(s => s.task_id === taskId);
-  const sorted = sortByPosition(current);
-  const position = sorted.length ? (sorted[sorted.length - 1].position + 1000) : 1000;
-
-  const { data, error } = await sb
-    .from("subtasks")
-    .insert([{
-      owner_id: sessionUser.id,
-      project_id: activeProjectId,
-      task_id: taskId,
-      text: trimmed,
-      done: false,
-      position
-    }])
-    .select("id, task_id, text, done, position, created_at, updated_at")
-    .single();
-
-  if (error) return alert("Could not add subtask.");
-
-  subtasks.push(data);
-  render();
-}
-
-async function toggleSubtask(id, done){
-  const { error } = await sb.from("subtasks").update({ done }).eq("id", id);
-  if (error) return alert("Could not update subtask.");
-  const st = subtasks.find(s => s.id === id);
-  if (st) st.done = done;
-  render();
-}
-
-async function deleteSubtask(id){
-  const { error } = await sb.from("subtasks").delete().eq("id", id);
-  if (error) return alert("Could not delete subtask.");
-  subtasks = subtasks.filter(s => s.id !== id);
-  render();
-}
-
-
-async function toggleSubtask(id, done){
-  const { error } = await sb.from("subtasks").update({ done }).eq("id", id);
-  if (error) return alert("Could not update subtask.");
-  const st = subtasks.find(s => s.id === id);
-  if (st) st.done = done;
-  render();
-}
-
-async function deleteSubtask(id){
-  const { error } = await sb.from("subtasks").delete().eq("id", id);
-  if (error) return alert("Could not delete subtask.");
-  subtasks = subtasks.filter(s => s.id !== id);
-  render();
-}
-
-
-// =====================
-// Login (username + password)
-// =====================
-async function signInOrSignUp(username, password) {
-  const email = usernameToEmail(username);
-
-  // Try sign in
-  let { data, error } = await sb.auth.signInWithPassword({ email, password });
-
-  // If no account yet, create it and sign in
-  if (error && /invalid login credentials/i.test(error.message)) {
-    const signup = await sb.auth.signUp({ email, password });
-    if (signup.error) throw signup.error;
-
-    const signin2 = await sb.auth.signInWithPassword({ email, password });
-    if (signin2.error) throw signin2.error;
-    data = signin2.data;
-  } else if (error) {
-    throw error;
-  }
-
-  return data;
-}
-
-// =====================
-// Wire up events
+// Events
 // =====================
 if (els.loginForm) {
   els.loginForm.addEventListener("submit", async (e) => {
@@ -603,18 +474,17 @@ if (els.loginForm) {
     const password = els.passInput?.value || "";
 
     if (!username || !password) {
-      if (els.loginMsg) els.loginMsg.textContent = "Enter username + password.";
+      els.loginMsg.textContent = "Enter username + password.";
       return;
     }
 
-    if (els.loginMsg) els.loginMsg.textContent = "Signing in…";
-
+    els.loginMsg.textContent = "Signing in…";
     try {
       await signInOrSignUp(username, password);
-      if (els.loginMsg) els.loginMsg.textContent = "Signed in.";
-      // onAuthStateChange will load the app
+      els.loginMsg.textContent = "Signed in.";
+      // auth listener loads app
     } catch (err) {
-      if (els.loginMsg) els.loginMsg.textContent = err?.message || "Login failed.";
+      els.loginMsg.textContent = err?.message || "Login failed.";
     }
   });
 }
