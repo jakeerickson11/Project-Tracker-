@@ -80,7 +80,7 @@ function pickPositionForInsert(sortedTasks, mode, refId) {
   if (mode === "top") return (sortedTasks[0].position ?? STEP) - STEP;
   if (mode === "bottom") return (sortedTasks[sortedTasks.length - 1].position ?? STEP) + STEP;
 
-  const idx = sortedTasks.findIndex((t) => t.id === refId);
+ 
   if (idx === -1) return (sortedTasks[sortedTasks.length - 1].position ?? STEP) + STEP;
 
   const current = sortedTasks[idx].position ?? STEP;
